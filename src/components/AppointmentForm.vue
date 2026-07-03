@@ -59,7 +59,7 @@ const {
   bookAppointment,
 } = useAppointments()
 
-const { handleSubmit, isSubmitting, setValues } = useForm({
+const { handleSubmit, isSubmitting, resetForm, meta } = useForm({
   validationSchema: appointmentSchema,
   initialValues: {
     name: '',
@@ -79,7 +79,7 @@ const minDate = getMinDate()
 const isWeekend = computed(() => isWeekendDate(date.value))
 
 const isFormValid = computed(() => {
-  return !!(name.value && email.value && date.value && start_time.value && !isWeekend.value)
+  return meta.value.valid && !isWeekend.value
 })
 
 const handleDateChange = () => {
@@ -97,11 +97,13 @@ const onSubmit = handleSubmit(async (values) => {
   const success = await bookAppointment(values)
   if (success) {
     const currentDate = values.date
-    setValues({
-      name: '',
-      email: '',
-      date: currentDate,
-      start_time: '',
+    resetForm({
+      values: {
+        name: '',
+        email: '',
+        date: currentDate,
+        start_time: '',
+      },
     })
     slotsLoading.value = true
 
