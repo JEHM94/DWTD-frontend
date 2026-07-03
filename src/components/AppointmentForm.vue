@@ -3,33 +3,36 @@
     <AlertMessage type="success" :message="successMessage" />
     <AlertMessage type="error" :message="errorMessage" />
 
-    <form @submit.prevent="submitForm" class="space-y-6">
+    <form @submit="onSubmit" class="space-y-6">
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1">Full Name</label>
-          <input v-model="form.name" type="text" required
+          <input v-model="name" type="text" name="name"
             class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:border-red-500 text-white"
             placeholder="John Doe">
+          <p v-if="nameError" class="text-red-400 text-sm mt-1">{{ nameError }}</p>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-300 mb-1">Email Address</label>
-          <input v-model="form.email" type="email" required
+          <input v-model="email" type="email" name="email"
             class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:border-red-500 text-white"
             placeholder="john@example.com">
+          <p v-if="emailError" class="text-red-400 text-sm mt-1">{{ emailError }}</p>
         </div>
       </div>
 
       <div>
         <label class="block text-sm font-medium text-gray-300 mb-1">Select Date</label>
-        <input v-model="form.date" type="date" :min="minDate" @change="handleDateChange" required
+        <input v-model="date" type="date" :min="minDate" @change="handleDateChange" name="date"
           class="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 focus:outline-none focus:border-red-500 text-white">
-        <p v-if="isWeekend" class="text-red-400 text-sm mt-1">Death rests on weekends. Please select a weekday.</p>
+        <p v-if="dateError" class="text-red-400 text-sm mt-1">{{ dateError }}</p>
       </div>
 
-      <TimeSlotGrid v-if="form.date && !isWeekend" v-model="form.start_time" :occupied-slots="occupiedSlots" />
+      <div v-if="slotsLoading" class="text-gray-400 text-sm">Loading available slots...</div>
+      <TimeSlotGrid v-else-if="date && !isWeekend" v-model="start_time" :occupied-slots="occupiedSlots" />
 
-      <button type="submit" :disabled="!isFormValid || isLoading"
+      <button type="submit" :disabled="!isFormValid || isSubmitting || isLoading"
         class="w-full py-3 px-4 bg-red-600 hover:bg-red-700 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-auto text-white font-bold rounded-lg transition-colors border-none cursor-pointer">
         {{ isLoading ? 'Booking...' : 'Confirm Appointment' }}
       </button>
@@ -39,8 +42,11 @@
 </template>
 
 <script setup>
-import { reactive, computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { useForm, useField } from 'vee-validate'
 import { useAppointments } from '../composables/useAppointments'
+import { appointmentSchema } from '../validation/appointmentSchema'
+import { getMinDate, getNextBusinessDay, isWeekend as isWeekendDate } from '../utils/date'
 import AlertMessage from './AlertMessage.vue'
 import TimeSlotGrid from './TimeSlotGrid.vue'
 
@@ -53,51 +59,65 @@ const {
   bookAppointment,
 } = useAppointments()
 
-const form = reactive({
-  name: '',
-  email: '',
-  date: '',
-  start_time: ''
+const { handleSubmit, isSubmitting, setValues } = useForm({
+  validationSchema: appointmentSchema,
+  initialValues: {
+    name: '',
+    email: '',
+    date: '',
+    start_time: '',
+  },
 })
 
-const minDate = computed(() => new Date().toISOString().split('T')[0])
+const { value: name, errorMessage: nameError } = useField('name')
+const { value: email, errorMessage: emailError } = useField('email')
+const { value: date, errorMessage: dateError } = useField('date')
+const { value: start_time, errorMessage: startTimeError } = useField('start_time')
 
-const isWeekend = computed(() => {
-  if (!form.date) return false
-  const day = new Date(form.date + 'T00:00:00').getDay()
-  return day === 0 || day === 6
-})
+const slotsLoading = ref(true)
+const minDate = getMinDate()
+const isWeekend = computed(() => isWeekendDate(date.value))
 
 const isFormValid = computed(() => {
-  return form.name && form.email && form.date && form.start_time && !isWeekend.value
+  return !!(name.value && email.value && date.value && start_time.value && !isWeekend.value)
 })
 
 const handleDateChange = () => {
-  form.start_time = ''
+  start_time.value = ''
   if (!isWeekend.value) {
-    fetchOccupiedSlots(form.date)
+    slotsLoading.value = true
+
+    fetchOccupiedSlots(date.value).finally(() => {
+      slotsLoading.value = false
+    })
   }
 }
 
-const submitForm = async () => {
-  const success = await bookAppointment(form)
+const onSubmit = handleSubmit(async (values) => {
+  const success = await bookAppointment(values)
   if (success) {
-    form.name = ''
-    form.email = ''
-    form.start_time = ''
+    const currentDate = values.date
+    setValues({
+      name: '',
+      email: '',
+      date: currentDate,
+      start_time: '',
+    })
+    slotsLoading.value = true
 
-    fetchOccupiedSlots(form.date)
+    fetchOccupiedSlots(currentDate).finally(() => {
+      slotsLoading.value = false
+    })
   }
-}
+})
 
 onMounted(() => {
-  const today = new Date()
+  const dateStr = getNextBusinessDay()
+  date.value = dateStr
+  slotsLoading.value = true
 
-  // Asignamos día hábil más cercano
-  if (today.getDay() === 6) today.setDate(today.getDate() + 2)
-  if (today.getDay() === 0) today.setDate(today.getDate() + 1)
-
-  form.date = today.toISOString().split('T')[0]
-  fetchOccupiedSlots(form.date)
+  fetchOccupiedSlots(dateStr).finally(() => {
+    slotsLoading.value = false
+  })
 })
 </script>
